@@ -27,7 +27,7 @@ To learn more about Fluid Simulation
   3. https://github.com/amandaghassaei/gpu-io/tree/main/examples/fluid
   4. http://nlpr.ia.ac.cn/2012papers/gjkw/gk45.pdf
   5. https://jamie-wong.com/2016/08/05/webgl-fluid-simulation/
-  6. https://paveldogreat.github.io/WebGL-Fluid-Simulation/(Pavel told me that he used knowlege in GPU Gems)
+  6. https://paveldogreat.github.io/WebGL-Fluid-Simulation/  (Pavel told me that he used knowlege in GPU Gems)
   7. https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-38-fast-fluid-dynamics-simulation-gpu
   8. https://pages.cs.wisc.edu/~chaol/data/cs777/stam-stable_fluids.pdf
   9. https://shahriyarshahrabi.medium.com/gentle-introduction-to-fluid-simulation-for-programmers-and-technical-artists-7c0045c40bac (Unity Implementation)
