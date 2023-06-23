@@ -21,7 +21,7 @@ const common_vertex_main = `
 
 const prefix_frag = `
     #ifdef GL_ES
-    precision mediump float;
+    precision highp float;
     #endif
 
     varying vec3 v_pos;
@@ -44,7 +44,7 @@ varying vec2 uv_2;
 varying vec2 vUv;
 varying vec3 v_pos;
 
-precision mediump float;
+precision highp float;
 
 void main(){
     v_pos = position;
@@ -69,6 +69,7 @@ const renderedFBOTexture = (gl:THREE.WebGLRenderer,fboInput:THREE.WebGLRenderTar
     //return fboInput.texture;
 } 
 
+
 interface AdvectionSolveProgramProps{
     scene?:any,
     camera?:THREE.Camera,
@@ -92,7 +93,7 @@ const AdvectionSolveProgram = ({scene,camera,isBounce,cellScale,fboSize,dt,src,d
     varying vec3 v_pos;
     uniform vec2 px;
     
-    precision mediump float;
+    precision highp float;
     
     void main(){
         v_pos = position;
@@ -107,7 +108,7 @@ const AdvectionSolveProgram = ({scene,camera,isBounce,cellScale,fboSize,dt,src,d
     
     
     const advection_frag=`
-    precision mediump float;
+    precision highp float;
     uniform sampler2D velocity;
     uniform float dt;
     uniform bool isBFECC;
@@ -115,6 +116,7 @@ const AdvectionSolveProgram = ({scene,camera,isBounce,cellScale,fboSize,dt,src,d
     uniform vec2 fboSize;
     uniform vec2 px;
     varying vec2 uv_2;
+    
     
     void main(){
         vec2 ratio = max(fboSize.x, fboSize.y) / fboSize;
@@ -145,6 +147,8 @@ const AdvectionSolveProgram = ({scene,camera,isBounce,cellScale,fboSize,dt,src,d
             vec2 newVel2 = texture2D(velocity, spot_old2).xy; 
             gl_FragColor = vec4(newVel2, 0.0, 0.0);
         }
+
+
     }`
     
     
@@ -179,9 +183,13 @@ const AdvectionSolveProgram = ({scene,camera,isBounce,cellScale,fboSize,dt,src,d
             faceMatRef.current.uniforms.velocity.value = src.texture;
             lineMatRef.current.uniforms.velocity.value = src.texture;
 
+
             // render the scene to the render target as output
-            if(dst && camera)
+            if(dst && camera){
                 renderedFBOTexture(gl,dst,scene,camera);
+            }
+
+
         }
     })
 
@@ -251,7 +259,7 @@ interface ExternalForceSolveProgramProps{
 const ExternalForceProgram = ({scene,camera,cellScale,scale,mouse_force,dst}:ExternalForceSolveProgramProps) =>{
 
     let mouse_vert=`
-    precision mediump float;
+    precision highp float;
 
     uniform vec2 center;
     uniform vec2 scale;
@@ -264,7 +272,7 @@ const ExternalForceProgram = ({scene,camera,cellScale,scale,mouse_force,dst}:Ext
         gl_Position = vec4(pos, 0.0, 1.0);
     }`
 
-    let externalForce_frag=`precision mediump float;
+    let externalForce_frag=`precision highp float;
     uniform vec2 force;
     uniform vec2 center;
     uniform vec2 scale;
@@ -277,6 +285,7 @@ const ExternalForceProgram = ({scene,camera,cellScale,scale,mouse_force,dst}:Ext
         float d = 1.0-min(length(circle), 1.0);
         d *= d;
         gl_FragColor = vec4(force * d, 0, 1);
+        //gl_FragColor = vec4(1., 1., 0, 1);
     }
     `
 
@@ -377,6 +386,277 @@ const ExternalForceProgram = ({scene,camera,cellScale,scale,mouse_force,dst}:Ext
 };
 ExternalForceProgram.displayName = 'ExternalForceProgram'
 
+interface FieldForceProgramProps{
+    scene?:any,
+    camera?:THREE.Camera,
+    dst?:THREE.WebGLRenderTarget | THREE.WebGLMultipleRenderTargets | null,
+}
+
+const FieldForceProgram = ({scene,camera,dst}:FieldForceProgramProps) =>{
+
+
+    const field_frag_prefix = `
+    #define MAPRES vec2(64,64);
+    #define PI 3.1415926535897932384626433832795
+    #define HALFPI 1.57079632679
+
+    // Hash Part
+    #define ITERATIONS 4
+
+
+    // *** Change these to suit your range of random numbers..
+
+    // *** Use this for integer stepped ranges, ie Value-Noise/Perlin noise functions.
+    #define HASHSCALE1 .1031
+    #define HASHSCALE3 vec3(.1031, .1030, .0973)
+    #define HASHSCALE4 vec4(.1031, .1030, .0973, .1099)
+
+    // For smaller input rangers like audio tick or 0-1 UVs use these...
+    //#define HASHSCALE1 443.8975
+    //#define HASHSCALE3 vec3(443.897, 441.423, 437.195)
+    //#define HASHSCALE4 vec3(443.897, 441.423, 437.195, 444.129)
+
+
+
+    //----------------------------------------------------------------------------------------
+    //  1 out, 1 in...
+    float hash11(float p)
+    {
+        vec3 p3  = fract(vec3(p) * HASHSCALE1);
+        p3 += dot(p3, p3.yzx + 19.19);
+        return fract((p3.x + p3.y) * p3.z);
+    }
+
+    //----------------------------------------------------------------------------------------
+    //  1 out, 2 in...
+    float hash12(vec2 p)
+    {
+        vec3 p3  = fract(vec3(p.xyx) * HASHSCALE1);
+        p3 += dot(p3, p3.yzx + 19.19);
+        return fract((p3.x + p3.y) * p3.z);
+    }
+
+    //----------------------------------------------------------------------------------------
+    //  1 out, 3 in...
+    float hash13(vec3 p3)
+    {
+        p3  = fract(p3 * HASHSCALE1);
+        p3 += dot(p3, p3.yzx + 19.19);
+        return fract((p3.x + p3.y) * p3.z);
+    }
+
+    //----------------------------------------------------------------------------------------
+    //  2 out, 1 in...
+    vec2 hash21(float p)
+    {
+        vec3 p3 = fract(vec3(p) * HASHSCALE3);
+        p3 += dot(p3, p3.yzx + 19.19);
+        return fract((p3.xx+p3.yz)*p3.zy);
+
+    }
+
+    //----------------------------------------------------------------------------------------
+    ///  2 out, 2 in...
+    vec2 hash22(vec2 p)
+    {
+        vec3 p3 = fract(vec3(p.xyx) * HASHSCALE3);
+        p3 += dot(p3, p3.yzx+19.19);
+        return fract((p3.xx+p3.yz)*p3.zy);
+
+    }
+
+    //----------------------------------------------------------------------------------------
+    ///  2 out, 3 in...
+    vec2 hash23(vec3 p3)
+    {
+            p3 = fract(p3 * HASHSCALE3);
+        p3 += dot(p3, p3.yzx+19.19);
+        return fract((p3.xx+p3.yz)*p3.zy);
+    }
+
+    //----------------------------------------------------------------------------------------
+    //  3 out, 1 in...
+    vec3 hash31(float p)
+    {
+    vec3 p3 = fract(vec3(p) * HASHSCALE3);
+    p3 += dot(p3, p3.yzx+19.19);
+    return fract((p3.xxy+p3.yzz)*p3.zyx); 
+    }
+
+
+    //----------------------------------------------------------------------------------------
+    ///  3 out, 2 in...
+    vec3 hash32(vec2 p)
+    {
+        vec3 p3 = fract(vec3(p.xyx) * HASHSCALE3);
+        p3 += dot(p3, p3.yxz+19.19);
+        return fract((p3.xxy+p3.yzz)*p3.zyx);
+    }
+
+    //----------------------------------------------------------------------------------------
+    ///  3 out, 3 in...
+    vec3 hash33(vec3 p3)
+    {
+        p3 = fract(p3 * HASHSCALE3);
+        p3 += dot(p3, p3.yxz+19.19);
+        return fract((p3.xxy + p3.yxx)*p3.zyx);
+
+    }
+
+    //----------------------------------------------------------------------------------------
+    // 4 out, 1 in...
+    vec4 hash41(float p)
+    {
+        vec4 p4 = fract(vec4(p) * HASHSCALE4);
+        p4 += dot(p4, p4.wzxy+19.19);
+        return fract((p4.xxyz+p4.yzzw)*p4.zywx);
+        
+    }
+
+    //----------------------------------------------------------------------------------------
+    // 4 out, 2 in...
+    vec4 hash42(vec2 p)
+    {
+        vec4 p4 = fract(vec4(p.xyxy) * HASHSCALE4);
+        p4 += dot(p4, p4.wzxy+19.19);
+        return fract((p4.xxyz+p4.yzzw)*p4.zywx);
+
+    }
+
+    //----------------------------------------------------------------------------------------
+    // 4 out, 3 in...
+    vec4 hash43(vec3 p)
+    {
+        vec4 p4 = fract(vec4(p.xyzx)  * HASHSCALE4);
+        p4 += dot(p4, p4.wzxy+19.19);
+        return fract((p4.xxyz+p4.yzzw)*p4.zywx);
+    }
+
+    //----------------------------------------------------------------------------------------
+    // 4 out, 4 in...
+    vec4 hash44(vec4 p4)
+    {
+            p4 = fract(p4  * HASHSCALE4);
+        p4 += dot(p4, p4.wzxy+19.19);
+        return fract((p4.xxyz+p4.yzzw)*p4.zywx);
+    }
+    `
+
+    const field_frag=`
+    uniform float time;
+    uniform vec2 resolution;
+    uniform sampler2D frame_texure;
+    #define iChannel0 frame_texure
+    #define iResolution resolution
+    #define iTime time
+
+    vec2 get_velocity(in vec2 p){
+        p = p * vec2(iResolution.x,iResolution.y)/MAPRES;
+        vec2 v = vec2(0.);
+        //==================== write your code here ==================
+        // v.x=sin(p.x);
+        // v.y=cos(p.y);
+        v.x=1.0;
+        v.y=0.0;
+        //============================================================
+        return v;
+    }
+
+    vec2 field(vec2 fragCoord) {
+        //I.   generate a staggered grid,
+        //     caculation in simulation will use centred difference
+        //     centred difference is  a more accurate approximation
+        //II.  readStoredPosition, get particles' position from texture => p
+        //III. generate random position => p = p + noise
+        //IV.  get the velocity
+        //V.   newPosition = position + velcotiy;
+        
+        for(int i = -1; i <= 1; i++) {
+            for(int j = -1; j <= 1; j++) {
+                //this loop function generate a grid
+                //get 9 point from center of fragCoord coordinate
+                vec2 uv = (fragCoord + vec2(i,j)) / iResolution.xy; 
+                vec2 p = texture(iChannel0, fract(uv)).xy;
+                if(p == vec2(0)) {
+                    // if there is noise point in this coordniate,the particle will exist,or return vec2(0.);
+                    if (hash13(vec3(fragCoord + vec2(i,j), iTime)) > 1e-4) continue;
+                    // in fact,the random hash value did not affect the final efx.
+                    p = fragCoord + vec2(i,j) + hash21(float(iTime)) - 0.5; // add particle
+                    
+                } else if (hash13(vec3(fragCoord + vec2(i,j), iTime)) < 8e-3) {
+                    continue; // remove particle
+                }
+                vec2 v = get_velocity((uv*2. - vec2(0.5,0.5*iResolution.x/iResolution.y)));
+                p = p + v; //newPosition
+                p.x = mod(p.x, iResolution.x);
+
+                // this means,control the pariticle in the grid
+                if(abs(p.x - fragCoord.x) < 0.5 && abs(p.y - fragCoord.y) < 0.5)
+                    return p;
+            }
+        }
+        
+        return vec2(0.);
+    }
+    `
+
+    let field_force_frag=`precision highp float;
+    uniform vec2 px;
+    varying vec2 vUv;
+
+    void main(){
+        vec2 circle = (vUv - 0.5) * 2.0;
+        float d = 1.0-min(length(circle), 1.0);
+        d *= d;
+        //gl_FragColor = vec4(force * d, 0, 1);
+        vec2 fieldPos = field(gl_FragCoord.xy);
+        gl_FragColor = vec4(fieldPos,0.,1.);
+    }
+    `
+
+
+
+    useFrame(({clock,gl})=>{
+        if(fieldForceMatRef.current && dst){
+            fieldForceMatRef.current.uniforms.time.value = clock.getElapsedTime();
+            fieldForceMatRef.current.uniforms.frame_texture.value = dst.texture;
+        }
+
+        if(dst && camera)
+            renderedFBOTexture(gl,dst,scene,camera);
+
+    })
+
+    const fieldForceMatRef = useRef<any>();
+    const {size} = useThree();
+
+    return(
+    <>
+        {createPortal(<>
+                <Plane args={[2,2]}>
+                    <shaderMaterial
+                        ref={fieldForceMatRef}
+                        blending={THREE.AdditiveBlending}
+                        uniforms={
+                            {
+                                time: { value:0 },
+                                resolution: { value:[size.width,size.height] },
+                                frame_texture:{value:null}
+                            }
+                        }
+                        vertexShader={face_vert} //mouse_vert
+                        fragmentShader={field_frag_prefix + field_frag +  field_force_frag}>
+                    
+                    </shaderMaterial>
+                </Plane>
+            </>,scene)
+        }
+    </>
+    )
+        
+};
+FieldForceProgram.displayName = 'FieldForceProgramProgram'
+
 interface ViscousSolveProgramProps{
     scene?:any,
     camera?:THREE.Camera,
@@ -392,7 +672,7 @@ interface ViscousSolveProgramProps{
 
 const ViscousSolveProgram = ({scene,camera,iterations_viscous,cellScale,boundarySpace,viscous,src,dst,dst_,dt}:ViscousSolveProgramProps) =>{
 
-    let viscous_frag=`precision mediump float;
+    let viscous_frag=`precision highp float;
     uniform sampler2D velocity;
     uniform sampler2D velocity_new;
     uniform float v;
@@ -512,10 +792,11 @@ interface DivergenceSolveProgramProps{
 
 const DivergenceSolveProgram = ({scene,camera,cellScale,boundarySpace,src,dst,vel,dt}:DivergenceSolveProgramProps) => {
     
-    const divergence_frag=`precision mediump float;
+    const divergence_frag=`precision highp float;
     uniform sampler2D velocity;
     uniform float dt;
     uniform vec2 px;
+    
     varying vec2 uv_2;
     
     void main(){
@@ -556,6 +837,7 @@ const DivergenceSolveProgram = ({scene,camera,cellScale,boundarySpace,src,dst,ve
                                 velocity: { value: src?src.texture:null },
                                 px: { value: cellScale?cellScale:[null,null] },
                                 dt: { value: dt?dt:null },
+                                time:{ value:null},
                             }
                         }
                         vertexShader={face_vert}
@@ -583,7 +865,7 @@ interface PoissonSolveProgramProps{
 
 const PoissonSolveProgram = ({scene,camera,cellScale,boundarySpace,iterations_poisson,src,dst,dst_}:PoissonSolveProgramProps) => {
     
-    const poisson_frag=`precision mediump float;
+    const poisson_frag=`precision highp float;
     uniform sampler2D pressure;
     uniform sampler2D divergence;
     uniform vec2 px;
@@ -648,6 +930,7 @@ const PoissonSolveProgram = ({scene,camera,cellScale,boundarySpace,iterations_po
     })
     
     const poissonMatRef = useRef<THREE.ShaderMaterial | null>(null)
+    const {size} = useThree();
 
     return(
         <>
@@ -662,6 +945,7 @@ const PoissonSolveProgram = ({scene,camera,cellScale,boundarySpace,iterations_po
                                 divergence: { value: src?src.texture:null },
                                 px: { value: cellScale?cellScale:[null,null] },
                                 time:{ value:null },
+                                resolution:{ value:[size.width,size.height]}
                             }
                         }
                         vertexShader={face_vert}
@@ -691,7 +975,7 @@ interface PressureSolveProgramProps{
 
 const PressureSolveProgram = ({scene,camera,cellScale,boundarySpace,src_p,src_v,src_update_p,src_update_v,dst,dt}:PressureSolveProgramProps) => {
     
-    const pressure_frag=`precision mediump float;
+    const pressure_frag=`precision highp float;
     uniform sampler2D pressure;
     uniform sampler2D velocity;
     uniform vec2 px;
@@ -771,7 +1055,7 @@ interface ColorProgramProps{
 }
 
 const ColorProgram = ({src}:ColorProgramProps) => {
-    const color_frag=`precision mediump float;
+    const color_frag=`precision highp float;
     uniform sampler2D velocity;
     varying vec2 uv_2;
     
@@ -824,16 +1108,16 @@ const FluidSimulation = () =>{
     const mouse_force = 20;
     const cursor_size = 100;
     const viscous = 30;
-    const isBounce = true;
+    const isBounce = false;
     const dt = 0.014;
     const isViscous = false;
-    const BFECC = true;
+    const isBFECC = true;
 
     const [screenWidth,setScreenWidth] = useState(size.width );
     const [screenHeight,setScreenHeight] = useState(size.height );
 
     // # Scene
-    const [advectionSolveScene,externalForceSolveScene,viscousSolveScene,divergenceSolveScene,poissonSolveScene,pressureSolveScene,
+    const [advectionSolveScene,forceSolveScene,viscousSolveScene,divergenceSolveScene,poissonSolveScene,pressureSolveScene,
 
     ] = useMemo(()=>{
         return [new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),
@@ -903,6 +1187,7 @@ const FluidSimulation = () =>{
     return(
         <>
 
+            {/* This Program Mainly for velocity caculation & error correction, it will keep in - out velocity */}
             <AdvectionSolveProgram
                 scene={advectionSolveScene}
                 camera={camera}
@@ -912,16 +1197,28 @@ const FluidSimulation = () =>{
                 dt={dt}
                 src={fbo_vel_0} // vel_0
                 dst={fbo_vel_1} // vel_1
-                isBFECC={BFECC}
+                isBFECC={isBFECC}
             ></AdvectionSolveProgram>
+
+            {/* This is so called Velocity Field,in this program,it's just a small pieces of mouse area,when speed is high,it will generate more fluid */}
+            {/* More color is more 'outflow' */}
             <ExternalForceProgram 
-                scene={externalForceSolveScene}
+                scene={forceSolveScene}
                 camera={camera}
                 cellScale={[1/(screenWidth * resolution),1/(screenHeight * resolution)]}
                 scale={[cursor_size,cursor_size]}
                 mouse_force={mouse_force}
                 dst={fbo_vel_1} // vel_1
             ></ExternalForceProgram>
+            
+            {/* In Experiment */}
+            {/* https://jamie-wong.com/2016/08/05/webgl-fluid-simulation/ */}
+            {/* 
+            <FieldForceProgram 
+                scene={forceSolveScene}
+                camera={camera}
+                dst={fbo_vel_1} // vel_1
+            ></FieldForceProgram> */}
 
             {isViscous?<ViscousSolveProgram 
                 scene={viscousSolveScene}
@@ -935,6 +1232,8 @@ const FluidSimulation = () =>{
                 dst_={fbo_vel_viscous_0} // vel_viscous_0
                 dt={dt}
             ></ViscousSolveProgram>:<></>}
+
+            {/* FYI , divergence causes expansion. */}
             <DivergenceSolveProgram 
                 scene={divergenceSolveScene}
                 camera={camera}
@@ -945,6 +1244,8 @@ const FluidSimulation = () =>{
                 vel={isViscous?fbo_vel_viscous_1:fbo_vel_1}
                 dt={dt}
             ></DivergenceSolveProgram>
+
+            {/* Use Poisson Equation to solve pressure,because it's a iteration,so the caculation's path like a contour line */}
             <PoissonSolveProgram 
                 scene={poissonSolveScene}
                 camera={camera}
@@ -969,7 +1270,7 @@ const FluidSimulation = () =>{
             ></PressureSolveProgram>
 
             <ColorProgram 
-                src={fbo_vel_0}
+                src={fbo_vel_1}
             ></ColorProgram>
         </>
     )
