@@ -1,4 +1,4 @@
-import { OrbitControls, Plane, shaderMaterial } from "@react-three/drei"
+import { OrbitControls, Plane,Circle, shaderMaterial } from "@react-three/drei"
 import { Canvas, useThree, useFrame, createPortal } from "@react-three/fiber"
 import { useControls } from "leva";
 import {  useEffect, useMemo, useRef, useState } from "react";
@@ -277,15 +277,20 @@ const ExternalForceProgram = ({scene,camera,cellScale,scale,mouse_force,dst}:Ext
     uniform vec2 center;
     uniform vec2 scale;
     uniform float mouse_force;
+    uniform float time;
     uniform vec2 px;
     varying vec2 vUv;
+
+    #define outFlowStrength 0.2
+    #define PI 3.1415926535897932384626433832795
 
     void main(){
         vec2 circle = (vUv - 0.5) * 2.0;
         float d = 1.0-min(length(circle), 1.0);
         d *= d;
         gl_FragColor = vec4(force * d, 0, 1);
-        //gl_FragColor = vec4(1., 1., 0, 1);
+        //float timeClock = fract(time) * 2.;
+        //gl_FragColor = vec4(sin(PI * timeClock) * 0.3, cos(PI*timeClock) * 0.3, 0, 1);
     }
     `
 
@@ -334,6 +339,9 @@ const ExternalForceProgram = ({scene,camera,cellScale,scale,mouse_force,dst}:Ext
 
     useFrame(({clock,gl})=>{
         updateMouse()
+        if(mouseMatRef.current){
+            mouseMatRef.current.uniforms.time.value = clock.getElapsedTime() ;
+        }
         if(mouse_force && cellScale && mouseMatRef.current){
             const forceX = diff.x / 2 * mouse_force;
             const forceY = diff.y / 2 * mouse_force;
@@ -361,7 +369,7 @@ const ExternalForceProgram = ({scene,camera,cellScale,scale,mouse_force,dst}:Ext
     return(
     <>
         {createPortal(<>
-                <Plane args={[1,1]}>
+                <Circle args={[0.25,32]}>
                     <shaderMaterial
                         ref={mouseMatRef}
                         blending={THREE.AdditiveBlending}
@@ -371,13 +379,14 @@ const ExternalForceProgram = ({scene,camera,cellScale,scale,mouse_force,dst}:Ext
                                 force: { value:[0.,0.] },
                                 center: { value:[0.,0.] },
                                 scale: { value:scale?scale:[null,null] },
+                                time:{value:0.}
                             }
                         }
                         vertexShader={mouse_vert} //mouse_vert
                         fragmentShader={externalForce_frag}>
                     
                     </shaderMaterial>
-                </Plane>
+                </Circle>
             </>,scene)
         }
     </>
@@ -1108,7 +1117,7 @@ const FluidSimulation = () =>{
     const mouse_force = 20;
     const cursor_size = 100;
     const viscous = 30;
-    const isBounce = false;
+    const isBounce = true;
     const dt = 0.014;
     const isViscous = false;
     const isBFECC = true;
@@ -1235,6 +1244,8 @@ const FluidSimulation = () =>{
             ></ViscousSolveProgram>:<></>}
 
             {/* FYI , divergence causes expansion. */}
+            {/* Divergence is how much fluid flows in and out.
+            Divergence > 0 means more outflow and divergence <0 means more inflow. */}
             <DivergenceSolveProgram 
                 scene={divergenceSolveScene}
                 camera={camera}
