@@ -811,10 +811,23 @@ const FluidSimulation = () =>{
 
     const {size,gl,camera} = useThree()
 
-    const resSize = 1.;
 
-    const [screenWidth,setScreenWidth] = useState(size.width * resSize);
-    const [screenHeight,setScreenHeight] = useState(size.height * resSize);
+
+    // ### Parameters
+
+    const iterations_poisson = 32;
+    const iterations_viscous = 32;
+    const resolution = 0.4;
+    const mouse_force = 20;
+    const cursor_size = 100;
+    const viscous = 30;
+    const isBounce = true;
+    const dt = 0.014;
+    const isViscous = true;
+    const BFECC = true;
+
+    const [screenWidth,setScreenWidth] = useState(size.width );
+    const [screenHeight,setScreenHeight] = useState(size.height );
 
     // # Scene
     const [advectionSolveScene,externalForceSolveScene,viscousSolveScene,divergenceSolveScene,poissonSolveScene,pressureSolveScene,
@@ -832,29 +845,16 @@ const FluidSimulation = () =>{
 
     ] = useMemo(()=>{
         return [
-            new THREE.WebGLRenderTarget(screenWidth,screenHeight,FBOSettings),
-            new THREE.WebGLRenderTarget(screenWidth,screenHeight,FBOSettings),
-            new THREE.WebGLRenderTarget(screenWidth,screenHeight,FBOSettings),
-            new THREE.WebGLRenderTarget(screenWidth,screenHeight,FBOSettings),
-            new THREE.WebGLRenderTarget(screenWidth,screenHeight,FBOSettings),
-            new THREE.WebGLRenderTarget(screenWidth,screenHeight,FBOSettings),
-            new THREE.WebGLRenderTarget(screenWidth,screenHeight,FBOSettings),
+            new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
+            new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
+            new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
+            new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
+            new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
+            new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
+            new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
 
         ]
     },[])
-
-    // ### Parameters
-
-    const iterations_poisson = 16;
-    const iterations_viscous = 16;
-    const resolution = 0.5;
-    const mouse_force = 20;
-    const cursor_size = 100;
-    const viscous = 30;
-    const isBounce = true;
-    const dt = 0.014;
-    const isViscous = false;
-    const BFECC = true;
 
 
     // // # Window Resize Function
@@ -879,8 +879,27 @@ const FluidSimulation = () =>{
         gl.autoClear = false;
     },[])
 
+    // # from stable fluid - Jos Stam 1999
+    // w0 -> add force -> w1 -> advect -> w2 -> diffuse -> w3 -> project -> w4 
+
+    // # from 29a.ch
+    // ┌──────────┐  vel    ┌──────────┐   vel  ┌────────────┐
+    // │  advect  ├────────►│ addForce ├───────►│ divergence │
+    // └────┬─────┘         └────┬─────┘        └─────┬──────┘
+    //      │ vel                │  vel               │  div
+    //      ▼                    ▼                    ▼
+    // ┌────────────────────────────────┐        ┌────────────┐
+    // │           pressure             │◄───────┤  solver    ◄─┐
+    // └────────────┬───────────────────┘        └──────┬─────┘ │
+    //              │ pressure                          │ pressure
+    //              │                                   └───────┘
+    //              ▼
+    //     ┌─────────────────┐
+    //     │     visualize   │
+    //     └─────────────────┘
     return(
         <>
+
             <AdvectionSolveProgram
                 scene={advectionSolveScene}
                 camera={camera}
@@ -900,6 +919,7 @@ const FluidSimulation = () =>{
                 mouse_force={mouse_force}
                 dst={fbo_vel_1} // vel_1
             ></ExternalForceProgram>
+
             {isViscous?<ViscousSolveProgram 
                 scene={viscousSolveScene}
                 camera={camera}
