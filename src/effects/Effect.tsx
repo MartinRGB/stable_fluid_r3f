@@ -589,6 +589,7 @@ const PoissonSolveProgram = ({scene,camera,cellScale,boundarySpace,iterations_po
     uniform vec2 px;
     varying vec2 uv_2;
     varying vec2 vUv;
+    
 
     void main(){    
         // poisson equation
@@ -599,6 +600,7 @@ const PoissonSolveProgram = ({scene,camera,cellScale,boundarySpace,iterations_po
         float div = texture2D(divergence, vUv).r;
         
         float newP = (p0 + p1 + p2 + p3) / 4.0 - div;
+
         gl_FragColor = vec4(newP);
     }`
 
@@ -626,6 +628,7 @@ const PoissonSolveProgram = ({scene,camera,cellScale,boundarySpace,iterations_po
             // ### Swap Buffer Method ###
             for(var i = 0; i < iterations_poisson; i++){
                 // render the scene to the render target as output
+                
                 if(camera && dst)
                     renderedFBOTexture(gl,dst,scene,camera)
                     
@@ -658,7 +661,7 @@ const PoissonSolveProgram = ({scene,camera,cellScale,boundarySpace,iterations_po
                                 pressure: { value: dst_?dst_.texture:null },
                                 divergence: { value: src?src.texture:null },
                                 px: { value: cellScale?cellScale:[null,null] },
-                                time:{ value:null }
+                                time:{ value:null },
                             }
                         }
                         vertexShader={face_vert}
@@ -704,7 +707,6 @@ const PressureSolveProgram = ({scene,camera,cellScale,boundarySpace,src_p,src_v,
         float p2 = texture2D(pressure, uv_2+vec2(0, px.y * step)).r;
         float p3 = texture2D(pressure, uv_2-vec2(0, px.y * step)).r;
     
-        // ********* bug here - velocity field is not work *********
         vec2 v = texture2D(velocity, uv_2).xy;
         vec2 gradP = vec2(p0 - p1, p2 - p3) * 0.5;
         v = v - gradP * dt;
@@ -782,7 +784,8 @@ const ColorProgram = ({src}:ColorProgramProps) => {
         vec3 color = vec3(vel.x, vel.y, 1.0);
         color = mix(vec3(1.0), color, len);
     
-        gl_FragColor = vec4(1. - color,  1.0);
+        gl_FragColor = vec4(color,  1.0);
+        //gl_FragColor = vec4(1. - color,  1.0);
     }`
 
     return(
@@ -823,7 +826,7 @@ const FluidSimulation = () =>{
     const viscous = 30;
     const isBounce = true;
     const dt = 0.014;
-    const isViscous = true;
+    const isViscous = false;
     const BFECC = true;
 
     const [screenWidth,setScreenWidth] = useState(size.width );
