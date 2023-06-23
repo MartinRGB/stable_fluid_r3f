@@ -1188,6 +1188,7 @@ const FluidSimulation = () =>{
         <>
 
             {/* This Program Mainly for velocity caculation & error correction, it will keep in - out velocity */}
+            {/* Finite difference */}
             <AdvectionSolveProgram
                 scene={advectionSolveScene}
                 camera={camera}
@@ -1256,6 +1257,8 @@ const FluidSimulation = () =>{
                 dst={fbo_pressure_1} // pressure_1
                 dst_={fbo_pressure_0} // pressure_0
             ></PoissonSolveProgram>
+
+            {/* Depend on pressure & velocity,to caculation in-flow & out-flow,also shaded the color */}
             <PressureSolveProgram 
                 scene={pressureSolveScene}
                 camera={camera}
