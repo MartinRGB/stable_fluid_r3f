@@ -2,6 +2,8 @@
 
 This is a [R3F](https://github.com/pmndrs/react-three-fiber) stabe-fluid project 
 
+[live preview](https://martinrgb.github.io/stable_fluid_r3f/) current is vector-field driven
+
 ## Getting Started
 
 First, run the development server:
