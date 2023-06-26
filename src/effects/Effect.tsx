@@ -148,6 +148,7 @@ import { Perf } from "r3f-perf";
     // v^(k+1)[i,j] = v^(k)[i,j]
     // - Δt/Δx* (  u^(k)[i,j]*(u^(k)[i,j] - u^(k)[i-1,j]) + v^(k)[i,j]*(v^(k)[i,j] - v^(k)[i,j-1]) + 1/2ρ*(p^(k)[i,j+1] - p^(k)[i,j-1]) )    )
     // + νΔt/Δx^2* (v^(k)[i+1,j] + v^(k)[i-1,j] + v^(k)[i,j+1] + v^(k)[i,j-1] - 4v^(k)[i,j]))
+    // --------- from 'Application - Pressure Poisson Equation' - https://barbagroup.github.io/essential_skills_RRC/numba/4/
 
 
 
