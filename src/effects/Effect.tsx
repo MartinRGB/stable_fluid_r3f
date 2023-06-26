@@ -397,11 +397,15 @@ ExternalForceProgram.displayName = 'ExternalForceProgram'
 
 interface FieldForceProgramProps{
     scene?:any,
+    vector_scene?:any,
     camera?:THREE.Camera,
+    resolution?:number,
     dst?:THREE.WebGLRenderTarget | THREE.WebGLMultipleRenderTargets | null,
+    fbo_0?:THREE.WebGLRenderTarget | THREE.WebGLMultipleRenderTargets | null,
+    fbo_1?:THREE.WebGLRenderTarget | THREE.WebGLMultipleRenderTargets | null,
 }
 
-const FieldForceProgram = ({scene,camera,dst}:FieldForceProgramProps) =>{
+const FieldForceProgram = ({scene,vector_scene,camera,dst,fbo_0,fbo_1,resolution}:FieldForceProgramProps) =>{
 
 
     const field_frag_prefix = `
@@ -551,11 +555,12 @@ const FieldForceProgram = ({scene,camera,dst}:FieldForceProgramProps) =>{
     }
     `
 
-    const field_frag=`
+    let field_frag=`
     uniform float time;
     uniform vec2 resolution;
-    uniform sampler2D frame_texure;
-    #define iChannel0 frame_texure
+    uniform sampler2D frame_texture;
+    varying vec2 vUv;
+    #define iChannel0 frame_texture
     #define iResolution resolution
     #define iTime time
 
@@ -563,15 +568,20 @@ const FieldForceProgram = ({scene,camera,dst}:FieldForceProgramProps) =>{
         p = p * vec2(iResolution.x,iResolution.y)/MAPRES;
         vec2 v = vec2(0.);
         //==================== write your code here ==================
-        // v.x=sin(p.x);
-        // v.y=cos(p.y);
-        v.x=1.0;
-        v.y=0.0;
+        v.x=sin(p.x);
+        v.y=cos(p.y);
+
+        // v.x = min(sin(exp(p.x)),sin(length(p)));
+        // v.y = sin(p.x);
+
+        //v.x = 0.0;
+        //v.y = 1.0;
+
         //============================================================
         return v;
     }
 
-    vec2 field(vec2 fragCoord) {
+    vec2 field(in vec2 fragCoord) {
         //I.   generate a staggered grid,
         //     caculation in simulation will use centred difference
         //     centred difference is  a more accurate approximation
@@ -607,37 +617,80 @@ const FieldForceProgram = ({scene,camera,dst}:FieldForceProgramProps) =>{
         
         return vec2(0.);
     }
-    `
-
-    let field_force_frag=`precision highp float;
-    uniform vec2 px;
-    varying vec2 vUv;
 
     void main(){
-        vec2 circle = (vUv - 0.5) * 2.0;
-        float d = 1.0-min(length(circle), 1.0);
-        d *= d;
-        //gl_FragColor = vec4(force * d, 0, 1);
-        vec2 fieldPos = field(gl_FragCoord.xy);
-        gl_FragColor = vec4(fieldPos,0.,1.);
+
+        // *** Field Method 1 *** 
+        // vec2 uv = gl_FragCoord.xy/iResolution.xy;
+        // vec2 fragC = vUv*iResolution.xy; // gl_FragCoord.xy;
+        // gl_FragColor.xy = field(fragC);
+        // //mix the current frame and previous frame
+        // gl_FragColor.z = 0.995 * texture2D(iChannel0, vUv).z;
+        // //gl_FragColor.z = 0.995 * texture2D(iChannel0, vUv).z;
+        // if (gl_FragColor.x > 0.) gl_FragColor.z = 1.;
+        // gl_FragColor.w = 1.0;
+        
+        // *** Field Method 2 ***
+        vec4 oldCol = texture2D(iChannel0, vUv);
+        float trail_strength = 0.7;
+        float field_x = field(vUv*iResolution.xy).x;
+        float field_y = field(vUv*iResolution.xy).y;
+        gl_FragColor  = vec4(
+            field_x + oldCol.x * trail_strength ,
+            field_y + oldCol.y * trail_strength ,
+            0.,
+            1.);
     }
+
     `
 
+
+    const fieldForceMatRef = useRef<any>();
+    const fieldForceComposeMatRef = useRef<any>();
+    const {size} = useThree();
 
 
     useFrame(({clock,gl})=>{
-        if(fieldForceMatRef.current && dst){
-            fieldForceMatRef.current.uniforms.time.value = clock.getElapsedTime();
-            fieldForceMatRef.current.uniforms.frame_texture.value = dst.texture;
+        if(fieldForceMatRef.current && fbo_0 && camera){
+
+
+            gl.setRenderTarget(fbo_0);
+            gl.render(scene, camera);
+            gl.setRenderTarget(null);
+
+            fieldForceMatRef.current.uniforms.time.value += 1/60;
+            fieldForceMatRef.current.uniforms.frame_texture.value = fbo_0.texture;
+        
+            
+            fieldForceComposeMatRef.current.uniforms.frame_texture.value = fbo_0.texture;
+            fieldForceComposeMatRef.current.uniforms.time.value += 1/60;
+
+            // *** swap buffer ***
+            const t1 = fbo_1
+            fbo_1 = fbo_0
+            fbo_0 = t1;
+
+
         }
 
+        // //*** test shaderMaterial uniform inputs ***
+        // if(fieldForceComposeMatRef.current && dst){
+
+        //     fieldForceComposeMatRef.current.uniforms.frame_texture.value = fbo_0.texture;
+        //     fieldForceComposeMatRef.current.uniforms.time.value += 1/60;
+
+        // }
+
+
         if(dst && camera)
-            renderedFBOTexture(gl,dst,scene,camera);
+            renderedFBOTexture(gl,dst,vector_scene,camera); // scene before
+
+ 
+
+
 
     })
 
-    const fieldForceMatRef = useRef<any>();
-    const {size} = useThree();
 
     return(
     <>
@@ -645,26 +698,60 @@ const FieldForceProgram = ({scene,camera,dst}:FieldForceProgramProps) =>{
                 <Plane args={[2,2]}>
                     <shaderMaterial
                         ref={fieldForceMatRef}
-                        blending={THREE.AdditiveBlending}
+                        // blending={THREE.AdditiveBlending} // if you want test Field Shader,plz comment this line
                         uniforms={
                             {
-                                time: { value:0 },
-                                resolution: { value:[size.width,size.height] },
+                                time: { value:null },
+                                resolution: { value:resolution?[size.width*resolution,size.height*resolution]:[null,null] },
+                                // resolution: { value:[size.width,size.height] },
                                 frame_texture:{value:null}
                             }
                         }
                         vertexShader={face_vert} //mouse_vert
-                        fragmentShader={field_frag_prefix + field_frag +  field_force_frag}>
+                        fragmentShader={field_frag_prefix + field_frag }>
                     
                     </shaderMaterial>
                 </Plane>
             </>,scene)
         }
+
+        {/* This is a test shader object */}
+        {createPortal(<>
+            <Plane args={[2,2]}>
+                <shaderMaterial
+                    ref={fieldForceComposeMatRef}
+                    blending={THREE.AdditiveBlending}
+                    uniforms={
+                        {
+                            frame_texture:{value:null},
+                            resolution: { value:resolution?[size.width*resolution,size.height*resolution]:[null,null] },
+                            time:{value:null}
+                        }
+                    }
+                    vertexShader={face_vert} 
+                    fragmentShader={`
+                        uniform sampler2D frame_texture;
+                        uniform vec2 resolution;
+                        uniform float time;
+                        varying vec2 vUv;
+                        void main(){
+                            //gl_FragColor = vec4(vUv.x,vUv.y,1.,1.);
+                            gl_FragColor = texture(frame_texture,vUv);
+                            float fluid_strength = 0.0005;
+                            gl_FragColor.xy *= vec2(fluid_strength);
+                            //gl_FragColor = vec4(vUv.x,vUv.y,(sin(time) + 1.)/2.,1.);
+                        }
+                    `}
+                ></shaderMaterial>
+            </Plane>
+            </>,vector_scene)
+        }
+
     </>
     )
         
 };
-FieldForceProgram.displayName = 'FieldForceProgramProgram'
+FieldForceProgram.displayName = 'FieldForceProgram'
 
 interface ViscousSolveProgramProps{
     scene?:any,
@@ -1119,17 +1206,24 @@ const FluidSimulation = () =>{
     const viscous = 30;
     const isBounce = true;
     const dt = 0.014;
-    const isViscous = false;
     const isBFECC = true;
+
 
     const [screenWidth,setScreenWidth] = useState(size.width );
     const [screenHeight,setScreenHeight] = useState(size.height );
 
     // # Scene
-    const [advectionSolveScene,forceSolveScene,viscousSolveScene,divergenceSolveScene,poissonSolveScene,pressureSolveScene,
+    const [
+            advectionSolveScene,
+            forceSolveScene,
+            viscousSolveScene,
+            divergenceSolveScene,
+            poissonSolveScene,
+            pressureSolveScene,
+            vectorFieldComposeScene
 
     ] = useMemo(()=>{
-        return [new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),
+        return [new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),new THREE.Scene(),new THREE.Scene()
 
         ]
     },[])
@@ -1137,7 +1231,7 @@ const FluidSimulation = () =>{
     // # FBO
     let FBOSettings = { format: THREE.RGBAFormat,minFilter: THREE.LinearFilter,magFilter: THREE.LinearFilter,type: THREE.FloatType,}
     
-    let [fbo_vel_0,fbo_vel_1,fbo_vel_viscous_0,fbo_vel_viscous_1,fbo_div,fbo_pressure_0,fbo_pressure_1,
+    let [fbo_vel_0,fbo_vel_1,fbo_vel_viscous_0,fbo_vel_viscous_1,fbo_div,fbo_pressure_0,fbo_pressure_1,field_fbo_0,field_fbo_1
 
     ] = useMemo(()=>{
         return [
@@ -1148,9 +1242,26 @@ const FluidSimulation = () =>{
             new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
             new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
             new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
+            
+            // new THREE.WebGLRenderTarget(screenWidth,screenHeight,FBOSettings),
+            // new THREE.WebGLRenderTarget(screenWidth,screenHeight,FBOSettings),
 
+            new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
+            new THREE.WebGLRenderTarget(screenWidth*resolution,screenHeight*resolution,FBOSettings),
         ]
     },[])
+
+
+
+    const isAdvection = true;
+    const isExternalForce = false;
+    const isFieldForce = true;
+    const isViscous = false;
+    const isDivergence = true;
+    const isPoisson = true;
+    const isPressure = true;
+    const isColorProgram = true;
+    const finalColor_src = fbo_vel_0;
 
 
     // // # Window Resize Function
@@ -1198,7 +1309,7 @@ const FluidSimulation = () =>{
 
             {/* This Program Mainly for velocity caculation & error correction, it will keep in - out velocity */}
             {/* Finite difference */}
-            <AdvectionSolveProgram
+            {isAdvection?<AdvectionSolveProgram
                 scene={advectionSolveScene}
                 camera={camera}
                 isBounce={isBounce}
@@ -1208,27 +1319,32 @@ const FluidSimulation = () =>{
                 src={fbo_vel_0} // vel_0
                 dst={fbo_vel_1} // vel_1
                 isBFECC={isBFECC}
-            ></AdvectionSolveProgram>
+            ></AdvectionSolveProgram>:<></>}
 
             {/* This is so called Velocity Field,in this program,it's just a small pieces of mouse area,when speed is high,it will generate more fluid */}
             {/* More color is more 'outflow' */}
-            <ExternalForceProgram 
+            
+            {isExternalForce?<ExternalForceProgram 
                 scene={forceSolveScene}
                 camera={camera}
                 cellScale={[1/(screenWidth * resolution),1/(screenHeight * resolution)]}
                 scale={[cursor_size,cursor_size]}
                 mouse_force={mouse_force}
                 dst={fbo_vel_1} // vel_1
-            ></ExternalForceProgram>
+            ></ExternalForceProgram>:<> </>}
             
             {/* In Experiment */}
             {/* https://jamie-wong.com/2016/08/05/webgl-fluid-simulation/ */}
-            {/* 
-            <FieldForceProgram 
+            
+            {isFieldForce?<FieldForceProgram 
                 scene={forceSolveScene}
+                vector_scene={vectorFieldComposeScene}
                 camera={camera}
+                resolution={resolution}
+                fbo_0={field_fbo_0}
+                fbo_1={field_fbo_1}
                 dst={fbo_vel_1} // vel_1
-            ></FieldForceProgram> */}
+            ></FieldForceProgram>:<></>}
 
             {isViscous?<ViscousSolveProgram 
                 scene={viscousSolveScene}
@@ -1246,7 +1362,8 @@ const FluidSimulation = () =>{
             {/* FYI , divergence causes expansion. */}
             {/* Divergence is how much fluid flows in and out.
             Divergence > 0 means more outflow and divergence <0 means more inflow. */}
-            <DivergenceSolveProgram 
+
+            {isDivergence?<DivergenceSolveProgram 
                 scene={divergenceSolveScene}
                 camera={camera}
                 cellScale={[1/(screenWidth * resolution),1/(screenHeight * resolution)]}
@@ -1255,10 +1372,11 @@ const FluidSimulation = () =>{
                 dst={fbo_div} // div
                 vel={isViscous?fbo_vel_viscous_1:fbo_vel_1}
                 dt={dt}
-            ></DivergenceSolveProgram>
+            ></DivergenceSolveProgram>:<></>}
 
             {/* Use Poisson Equation to solve pressure,because it's a iteration,so the caculation's path like a contour line */}
-            <PoissonSolveProgram 
+            
+            {isPoisson?<PoissonSolveProgram 
                 scene={poissonSolveScene}
                 camera={camera}
                 cellScale={[1/(screenWidth * resolution),1/(screenHeight * resolution)]}
@@ -1267,10 +1385,11 @@ const FluidSimulation = () =>{
                 src={fbo_div} // div
                 dst={fbo_pressure_1} // pressure_1
                 dst_={fbo_pressure_0} // pressure_0
-            ></PoissonSolveProgram>
+            ></PoissonSolveProgram>:<></>}
 
             {/* Depend on pressure & velocity,to caculation in-flow & out-flow,also shaded the color */}
-            <PressureSolveProgram 
+
+            {isPressure?<PressureSolveProgram 
                 scene={pressureSolveScene}
                 camera={camera}
                 cellScale={[1/(screenWidth * resolution),1/(screenHeight * resolution)]}
@@ -1281,11 +1400,11 @@ const FluidSimulation = () =>{
                 src_update_v={isViscous?fbo_vel_viscous_1:fbo_vel_1}
                 dst={fbo_vel_0}
                 dt={dt}
-            ></PressureSolveProgram>
+            ></PressureSolveProgram>:<></>}
 
-            <ColorProgram 
-                src={fbo_vel_1}
-            ></ColorProgram>
+            {isColorProgram?<ColorProgram 
+                src={finalColor_src}
+            ></ColorProgram>:<></>}
         </>
     )
 }
