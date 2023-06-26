@@ -5,6 +5,152 @@ import {  useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from 'three'
 import { Perf } from "r3f-perf";
 
+
+    // *** The Process of Fluid Simulation ***
+    // # from stable fluid - Jos Stam 1999
+    // w0 -> add force -> w1 -> advect -> w2 -> diffuse -> w3 -> project -> w4 
+    
+    // # from 29a.ch
+    // ┌──────────┐  vel    ┌──────────┐   vel  ┌────────────┐
+    // │  advect  ├────────►│ addForce ├───────►│ divergence │
+    // └────┬─────┘         └────┬─────┘        └─────┬──────┘
+    //      │ vel                │  vel               │  div
+    //      ▼                    ▼                    ▼
+    // ┌────────────────────────────────┐        ┌────────────┐
+    // │           pressure             │◄───────┤  solver    ◄─┐
+    // └────────────┬───────────────────┘        └──────┬─────┘ │
+    //              │ pressure                          │ pressure
+    //              │                                   └───────┘
+    //              ▼
+    //     ┌─────────────────┐
+    //     │     visualize   │
+    //     └─────────────────┘
+
+    // *** Naive-Stroke Equation - The Core Idea ***
+    // # from incompressible Naive-Stroke Equation:
+    // 	∂u/∂t = -u*∇u - 1/ρ*∇p + ν∇²u      + f
+    //  ----    ----    -----    ----      ---
+    //   |        |       |        |        |
+    //        advection pressure viscosity force
+    //  ----    ----    -----    ----      ---
+    // in incompressible flow, ∇·u = 0
+
+    // *** Nabla & Central Difference  ***
+    // ∇ --> Nabla/Del Gradient/Divergence Operator
+    // for example ∇·F = ∂Fx/∂x + ∂Fy/∂y + ∂Fz/∂z
+    //  --------------------------------
+    // |          |          |          |
+    // | f(x-1,y) |  f(x,y)  | f(x+1,y) |
+    // |          |          |          |
+    //  --------------------------------
+    // ∂f[x,y]/∂x ≈ (f[x+1,y] - f[x-1,y]) / 2
+    //  ----------
+    // |          | 
+    // | f(x,y+1) |  
+    // |          |
+    //  ----------
+    //  ----------
+    // |          | 
+    // |  f(x,y)  |  
+    // |          |
+    //  ----------
+    //  ----------
+    // |          |
+    // | f(x,y-1) |
+    // |          |
+    //  ----------
+    // ∂f[x,y]/∂y ≈ (f[x,y+1] - f[x,y-1]) / 2
+    // in this implementation,we use central difference
+
+        
+    // *** Semi-Lagranian Method in AdvectionProgram ***
+    // Instead of directly computing the acceleration due to the convection term in Equation 13.4, 
+    // the effect of the convection term is approximated using a Lagrangian approach. Since the convection 
+    // term accounts for fluid transport, it results in the advection of all properties of the fluid, including
+    // the fluid’s velocity. To estimate this effect,
+    // each velocity sample in the computational grid is treated as if it were a particle.
+    // By following the velocity field backward one time-step, it is possible to estimate 
+    // where in space this particle came from. Then, the velocity at its former position is copied to the sample’s position:
+    // The algorithm, as written, uses only first-order Euler integration to do the backtracing. 
+    // It could be easily modified to use a higher-order integrator, like RK4, for improved advection accuracy. 
+    // --------- from 'Foundations of physically based Modeling & Animation'
+
+
+    // *** Laplacian Operator in Viscosity/Pressure Program ***
+    // The Laplacian operator ∇2 = ∇ · ∇ operates on either a vector or a scalar field, 
+    // returning a field of the same type. We can write this operator: 
+    // ∇2 =∇·∇= (∂/∂x)^2 + (∂/∂y)^2 + (∂/∂z)^2
+    // ---------- from 'Fondations of physically base Modelling & Animation
+    // The divergence is :
+    // ∇·f ≈ (fx[x+1,y] - fx[x-1,y])/2Δx + (fy[x,y+1] - fy[x,y-1])/2Δy 
+    // So the Laplacian f is:
+    // ∇^2·f[x,y] ≈ (∇fx[x+1,y] - ∇fx[x-1,y])/2Δx + (∇fy[x,y+1] - ∇fy[x,y-1])/2Δy 
+    // if Δy = Δx:
+    // ∇^2·f[x,y] ≈ (f[x+2,y] + f[x-2,y] + f[x,y+2] + f[x,y-2] - 4f[x,y])/4Δx^2
+    // --------- from 'Stable Fluids with three.js' - mofu
+
+    // *** Swap Buffer && Jacobi Iteration Method(2 FBOs Caculation) ***
+    // *** Which can be called Jacobi-Poisson Kernel Computation ***
+    // *** 1. Jacobi Iteration Method ***
+    // then Jacobi’s Method can be written in matrix-vector notation as
+    // x^(k+1) = D^(-1) * (b - (L + U) * x^(k))
+    // where D is the diagonal of A, L is the lower triangular part of A, and U is the upper triangular part of A.
+    // The matrix D^(-1) is the inverse of the diagonal of A, and is trivial to compute.
+    // The matrix-vector multiplication (L + U) * x^(k) can be computed in a single pass through the matrix,
+    // Such kernel is equivalent to the kth step of the Jacobi method
+    // In order to minimize the CPU workload, we can reformulate the problem to have a 
+    // full convolutional kernel matrix C that is executed only once and on GPU.
+    // x^(k) = C^(k) * b
+    // We take advantage of the recursive structure of the Jacobi method to compute C. 
+    // The element wise version of the Jacobi method for computing the pressure is:
+    // p^(k+1)[i,j] = (p^(k)[i-1,j] + p^(k)[i+1,j] + p^(k)[i,j-1] + p^(k)[i,j+1] - b[i,j]) / β
+    // --------- from 'Fast Eulerian Fluid Simulation In Games Using Poisson Filters'
+    // *** 2. Poisson Equation ***
+    // the momentum equation for the velocity field is:
+    // ∂u/∂t = -u*∇u - 1/ρ*∇p + ν∇²u
+    // p is pressrue, v is the fluid viscosity, ρ is the fluid density
+    // This is what we do: take the divergence of the momentum equation, 
+    // an incompressible fluid requires that the divergence of u⃗ must be zero:
+    // ∇·u = 0
+    // apply the incompressibility constraint to cancel some terms, and get an equation for the pressure. It's a pretty cool trick.
+    // Writing out the momentum equation in x and y components (for two-dimensional flow), we get
+    // ∂u/∂t = -u*∂u/∂x - v*∂u/∂y - 1/ρ*∂p/∂x + ν(∂²u/∂x² + ∂²u/∂y²)
+    // ∂v/∂t = -u*∂v/∂x - v*∂v/∂y - 1/ρ*∂p/∂y + ν(∂²v/∂x² + ∂²v/∂y²)
+    // We take the divergence of the momentum equation and then apply the incompressibility constraint. 
+    // After some wrangling and cancellations, this leaves us with the pressure Poisson equation:
+    // ∂²p/∂x² + ∂²p/∂y² = ρ/∂t(∂u/∂x + ∂v/∂y)
+    // Which is an equation of the form
+    // (∂p/∂x)^2 + (∂p/∂y)^2 = b
+    // Then the left-hand side of the Poisson equation, i.e., the Laplacian differential operator applied to p
+    //, is discretized using 2nd-order central differences as follows
+    // ∂²p/∂x² ≈ (p[i-1,j] + p[i+1,j] - 2p[i,j]) / Δx²
+    // ∂²p/∂y² ≈ (p[i,j-1] + p[i,j+1] - 2p[i,j]) / Δy²
+    // * Calculate Pressure:
+    // Then, we iteratively solve the Poisson equation for pressure, 
+    // as described above. Starting with an initial guess, the values p i,j  are updated using the neighboring values of p, u
+    // and v at (i+1,j) and (i,j+1). 
+    // The updates can be written as follows, where the ksuperscript denotes an iteration in 'pseudo-time':
+    // p^(k+1)[i,j] = 
+    // (p^(k)[i-1,j] + p^(k)[i+1,j] + p^(k)[i,j-1] + p^(k)[i,j+1])/4.0
+    // - (ρΔx/16.0)(
+    // 2/Δt(u[i+1,j] - u[i-1,j] + v[i,j+1] - v[i,j-1]) - 2/Δt(u[i+1,j] 
+    // - u[i,j-1])*(v[i+1,j] - v[i,j-1])
+    // - (u[i+1,j] - u[i-1,j])^2/Δx - (v[i,j+1] - v[i,j-1])^2/Δy
+    // )
+    // * Calculate Velocity:
+    //Once the pressure field reaches its quasi-steady state via the Poisson equation, we use that field for the current time step,
+    // to calculate the velocity field for the next time step. The velocity field is updated using the following equations:
+    // for the u direction:
+    // u^(k+1)[i,j] = u^(k)[i,j] 
+    // - Δt/Δx* (  u^(k)[i,j]*(u^(k)[i,j] - u^(k)[i-1,j]) + v^(k)[i,j]*(v^(k)[i,j] - v^(k)[i,j-1]) + 1/2ρ*(p^(k)[i+1,j] - p^(k)[i-1,j]) )    )
+    // + νΔt/Δx^2* (u^(k)[i+1,j] + u^(k)[i-1,j] + u^(k)[i,j+1] + u^(k)[i,j-1] - 4u^(k)[i,j]))
+    // it is same for the v direction:
+    // v^(k+1)[i,j] = v^(k)[i,j]
+    // - Δt/Δx* (  u^(k)[i,j]*(u^(k)[i,j] - u^(k)[i-1,j]) + v^(k)[i,j]*(v^(k)[i,j] - v^(k)[i,j-1]) + 1/2ρ*(p^(k)[i,j+1] - p^(k)[i,j-1]) )    )
+    // + νΔt/Δx^2* (v^(k)[i+1,j] + v^(k)[i-1,j] + v^(k)[i,j+1] + v^(k)[i,j-1] - 4v^(k)[i,j]))
+
+
+
 const prefix_vertex = `
     varying vec2 vUv;
     varying vec3 v_pos;
@@ -802,42 +948,43 @@ const ViscousSolveProgram = ({scene,camera,iterations_viscous,cellScale,boundary
 
         if(iterations_viscous && dst && dst_){
 
-            // for(var i = 0; i < iterations_viscous; i++){
-            //     let isEven = i  % 2 ==0;
-
-            //     if(viscousMatRef.current){
-            //         viscousMatRef.current.uniforms.velocity_new.value = isEven?dst_.texture:dst.texture;
-            //     }
-                
-            //     if(viscousMatRef.current && dt){
-            //         viscousMatRef.current.uniforms.dt.value = dt;
-            //     }
-
-            //     // render the scene to the render target as output
-            //     if(camera)
-            //         renderedFBOTexture(gl,isEven?dst:dst_,scene,camera);
-            // }
-
-            // ### Swap Buffer Method ###
+            // ### Jacobi Iteration Method ###
             for(var i = 0; i < iterations_viscous; i++){
-                // render the scene to the render target as output
-                if(camera && dst)
-                    renderedFBOTexture(gl,dst,scene,camera)
-                    
-                if(viscousMatRef.current && dst){
-                    viscousMatRef.current.uniforms.velocity_new.value = dst.texture;
-                }
+                let isEven = i  % 2 ==0;
 
+                if(viscousMatRef.current){
+                    viscousMatRef.current.uniforms.velocity_new.value = isEven?dst_.texture:dst.texture;
+                }
+                
                 if(viscousMatRef.current && dt){
                     viscousMatRef.current.uniforms.dt.value = dt;
                 }
 
-                // swap buffer
-                let t1 = dst;
-                dst = dst_;
-                dst_ = t1;
-            
+                // render the scene to the render target as output
+                if(camera)
+                    renderedFBOTexture(gl,isEven?dst:dst_,scene,camera);
             }
+
+            // ### Swap Buffer Method ###
+            // for(var i = 0; i < iterations_viscous; i++){
+            //     // render the scene to the render target as output
+            //     if(camera && dst)
+            //         renderedFBOTexture(gl,dst,scene,camera)
+                    
+            //     if(viscousMatRef.current && dst){
+            //         viscousMatRef.current.uniforms.velocity_new.value = dst.texture;
+            //     }
+
+            //     if(viscousMatRef.current && dt){
+            //         viscousMatRef.current.uniforms.dt.value = dt;
+            //     }
+
+            //     // swap buffer
+            //     let t1 = dst;
+            //     dst = dst_;
+            //     dst_ = t1;
+            
+            // }
 
         }
 
@@ -987,39 +1134,40 @@ const PoissonSolveProgram = ({scene,camera,cellScale,boundarySpace,iterations_po
 
         if(iterations_poisson && dst && dst_){
             
-            // for(var i = 0; i < iterations_poisson; i++){
+            // ### Jacobi Iteration Method ###
+            for(var i = 0; i < iterations_poisson; i++){
 
-            //     let isEven = i  % 2 ==0;
+                let isEven = i  % 2 ==0;
 
 
-            //     if(poissonMatRef.current){
-            //         poissonMatRef.current.uniforms.pressure.value = isEven?dst_.texture:dst.texture;
-            //     }
+                if(poissonMatRef.current){
+                    poissonMatRef.current.uniforms.pressure.value = isEven?dst_.texture:dst.texture;
+                }
                 
 
-            //     // render the scene to the render target as output
-            //     if(camera)
-            //         renderedFBOTexture(gl,isEven?dst:dst_,scene,camera)
+                // render the scene to the render target as output
+                if(camera)
+                    renderedFBOTexture(gl,isEven?dst:dst_,scene,camera)
                 
-            // }   
+            }   
 
             // ### Swap Buffer Method ###
-            for(var i = 0; i < iterations_poisson; i++){
-                // render the scene to the render target as output
+            // for(var i = 0; i < iterations_poisson; i++){
+            //     // render the scene to the render target as output
                 
-                if(camera && dst)
-                    renderedFBOTexture(gl,dst,scene,camera)
+            //     if(camera && dst)
+            //         renderedFBOTexture(gl,dst,scene,camera)
                     
-                if(poissonMatRef.current && dst){
-                    poissonMatRef.current.uniforms.pressure.value = dst.texture;
-                }
+            //     if(poissonMatRef.current && dst){
+            //         poissonMatRef.current.uniforms.pressure.value = dst.texture;
+            //     }
 
-                // swap buffer
-                let t1 = dst;
-                dst = dst_;
-                dst_ = t1;
+            //     // swap buffer
+            //     let t1 = dst;
+            //     dst = dst_;
+            //     dst_ = t1;
             
-            }
+            // }
 
         }
         
@@ -1263,7 +1411,6 @@ const FluidSimulation = () =>{
     const isColorProgram = true;
     const finalColor_src = fbo_vel_0;
 
-
     // // # Window Resize Function
     // const resizeFuns = (width:number,height:number) =>{
     //     setScreenWidth(width*resSize)
@@ -1286,24 +1433,6 @@ const FluidSimulation = () =>{
         gl.autoClear = false;
     },[])
 
-    // # from stable fluid - Jos Stam 1999
-    // w0 -> add force -> w1 -> advect -> w2 -> diffuse -> w3 -> project -> w4 
-
-    // # from 29a.ch
-    // ┌──────────┐  vel    ┌──────────┐   vel  ┌────────────┐
-    // │  advect  ├────────►│ addForce ├───────►│ divergence │
-    // └────┬─────┘         └────┬─────┘        └─────┬──────┘
-    //      │ vel                │  vel               │  div
-    //      ▼                    ▼                    ▼
-    // ┌────────────────────────────────┐        ┌────────────┐
-    // │           pressure             │◄───────┤  solver    ◄─┐
-    // └────────────┬───────────────────┘        └──────┬─────┘ │
-    //              │ pressure                          │ pressure
-    //              │                                   └───────┘
-    //              ▼
-    //     ┌─────────────────┐
-    //     │     visualize   │
-    //     └─────────────────┘
     return(
         <>
 
