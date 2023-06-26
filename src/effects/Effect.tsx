@@ -75,6 +75,31 @@ import { Perf } from "r3f-perf";
     // It could be easily modified to use a higher-order integrator, like RK4, for improved advection accuracy. 
     // --------- from 'Foundations of physically based Modeling & Animation'
 
+    // *** Divergence Program ***
+    //Divergence is how much fluid flows in and out.Divergence > 0 means more outflow and divergence 
+    //<0 means more inflow. In other words, the continuity equation 
+    //∇⋅u  =0 means that the inflow and outflow are equal to zero.
+    //If we focus on a small cell with a tank full of fluid, we can imagine that the amount of fluid entering and leaving the cell is the same.
+    // ∇·u = 0
+    // ∂ux/∂x + ∂vy/∂y = 0
+    // The approximation is 
+    // ∇·u ≈ (ux[x+1,y] - ux[x-1,y])/2Δx + (vy[x,y+1] - vy[x,y-1])/2Δy = 0
+    //              ----------
+    //             |     ^    |
+    //             |     |    |
+    //             |          |
+    //   --------------------------------
+    // |           |          |          | 
+    // |    <-     | div = 0  |    <-    |
+    // |           |          |          |
+    //  ---------------------------------
+    //             |     ^    |
+    //             |     |    |
+    //             |          |
+    //              ----------
+
+
+    // --------- from 'Stable Fluids with three.js' - mofu
 
     // *** Laplacian Operator in Viscosity/Pressure Program ***
     // The Laplacian operator ∇2 = ∇ · ∇ operates on either a vector or a scalar field, 
