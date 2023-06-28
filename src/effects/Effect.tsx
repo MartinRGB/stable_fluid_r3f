@@ -25,6 +25,7 @@ import { Perf } from "r3f-perf";
     //     ┌─────────────────┐
     //     │     visualize   │
     //     └─────────────────┘
+    
 
     // *** Naive-Stroke Equation - The Core Idea ***
     // # from incompressible Naive-Stroke Equation:
@@ -909,7 +910,7 @@ const FieldForceProgram = ({scene,vector_scene,camera,dst,fbo_0,fbo_1,resolution
                         void main(){
                             //gl_FragColor = vec4(vUv.x,vUv.y,1.,1.);
                             gl_FragColor = texture(frame_texture,vUv);
-                            float fluid_strength = 0.0005;
+                            float fluid_strength = 0.0001;
                             gl_FragColor.xy *= vec2(fluid_strength);
                             //gl_FragColor = vec4(vUv.x,vUv.y,(sin(time) + 1.)/2.,1.);
                         }
@@ -1428,8 +1429,8 @@ const FluidSimulation = () =>{
 
 
     const isAdvection = true;
-    const isExternalForce = false;
-    const isFieldForce = true;
+    const isExternalForce = true;
+    const isFieldForce = false;
     const isViscous = false;
     const isDivergence = true;
     const isPoisson = true;
